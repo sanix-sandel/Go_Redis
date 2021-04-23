@@ -3,67 +3,56 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gomodule/redigo/redis"
 )
 
-type Album struct {
-	Title  string
-	Artist string
-	Price  float64
-	Likes  int
-}
-
-func populateAlbum(reply map[string]string) (*Album, error) {
-	var err error
-	album := new(Album)
-	album.Title = reply["title"]
-	album.Artist = reply["artist"]
-
-	album.Price, err = strconv.ParseFloat(reply["price"], 64)
-	if err != nil {
-		return nil, err
-	}
-
-	album.Likes, err = strconv.Atoi(reply["likes"])
-	if err != nil {
-		return nil, err
-	}
-	return album, nil
-}
-
 func main() {
-	//establish connection
-	conn, err := redis.Dial("tcp", "localhost:6379")
-	if err != nil {
-		log.Fatal(err)
+	pool = &redis.Pool{
+		MaxIdle:     10,
+		IdleTimeout: 240 * time.Second,
+		Dial: func() (redis.Conn, error) {
+			return redis.Dial("tcp", "localhost:6379")
+		},
 	}
 
-	//close the connection
-	defer conn.Close()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/album", showAlbum)
+	log.Println("Listening on :4000....")
+	http.ListenAndServe(":4000", mux)
+}
 
-	/*_, err = conn.Do("HMSET", "album:2", "title", "Electric Ladyland", "artist", "Jimi Hendrix", "price", 4.95, "likes", 8)
-	if err != nil {
-		log.Fatal(err)
-	}
-	//get titile and converting it to string
-	title, err := redis.String(conn.Do("HGET", "album:2", "title"))
-	if err != nil {
-		log.Fatal(err)
-	}*/
-	//HGETALL to get array of replies
-	reply, err := redis.StringMap(conn.Do("HGETALL", "album:2"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	album, err := populateAlbum(reply)
-	if err != nil {
-		log.Fatal(err)
+func showAlbum(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, http.StatusText(405), 405)
+		return
 	}
 
-	fmt.Println(album)
+	//retrieve id from the request URL query
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, http.StatusText(400), 400)
+		return
+	}
 
-	//fmt.Println("Electric Ladyland added")
+	//validate that the id is a valid integer by trying to convert it
+	if _, err := strconv.Atoi(id); err != nil {
+		http.Error(w, http.StatusText(400), 400)
+		return
+	}
+
+	bk, err := FindAlbum(id)
+	if err == ErrNoAlbum {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		http.Error(w, http.StatusText(500), 500)
+		return
+	}
+	fmt.Fprintf(w, "%s by %s: £%.2f [%d likes] \n", bk.Title, bk.Artist, bk.Price, bk.Likes)
 
 }
