@@ -1,1 +1,1 @@
-# Node.js-Blog
+Go Redis connection
